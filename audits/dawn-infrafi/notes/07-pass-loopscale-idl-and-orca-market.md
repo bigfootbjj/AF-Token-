@@ -55,28 +55,55 @@ protocol, program, vault primitives, oracle keeper, or any Loopscale-operated in
 of scope here and must be reported to Loopscale."* Cette autorité `manager` est exactement ça — de
 l'infrastructure opérée par Loopscale, pas par DAWN/InfraFi. Pas de finding ici.
 
-### Ce qu'on n'a PAS pu vérifier : l'autorité borrow/repay spécifique à DAWN
+### Mise à jour — débloqué avec une clé RPC Alchemy (fournie par Mathieu) : vérification complète
 
-Le texte in-scope officiel dit : *"DAWN is the sole whitelisted borrower via a Squads V4 multisig."*
-Cette autorisation vit dans un compte `MarketInformation` séparé (champ `authority` +`delegate`),
-PAS dans le `manager` du Vault qu'on vient de décoder. `MarketInformation` n'est pas dérivable comme
-PDA depuis l'IDL (pas de seeds documentées) — il faut soit :
-- un `getProgramAccounts` avec filtre `memcmp` sur `principal_mint` à l'offset 72 → **refusé par le
-  RPC public gratuit** (`INVALID_PARAMS_WITH_MESSAGE`, restriction anti-abus standard sur les RPC
-  Solana publics mainnet-beta pour les requêtes `memcmp`), ou
-- remonter une transaction historique touchant la bonne instruction (`borrow_principal` /
-  `update_market_information`) pour lire l'adresse exacte passée en paramètre.
+Avec un RPC supportant `memcmp` (Alchemy), la chaîne complète a pu être tracée sans aucun doute :
 
-Tentative sur l'historique du vault `4rXteU...` : les transactions récentes trouvées (`getSignaturesForAddress`)
-impliquent un programme **différent** (`sVau1tXvayVWfotzm9Ahcv2qfnnfRWttt78BCnNC6dD`, pas
-`1oopBoJG...`), probablement un programme de staking de LP distinct qui référence le compte vault en
-lecture seule — pas la piste qui mène à `market_information`.
+1. **`Strategy` (8460 bytes réels)** décodée pour les ~17 strategies dont `principal_mint` =
+   `dawn7ZUF...` → celle liée au vault principal (`lender = 4rXteU...`) est `836SQM4FLXELjrSu2cLLvi32aiqn22uNbZsZvBNdDHFm`,
+   avec `market_information = 6TBbDMm1uoVbxVrcs8bWnmoyuks4wzHNyQqX3GaEFcgB`.
+2. **`MarketInformation`** décodée : `authority` = `delegate` = **le vault PDA lui-même**
+   (`4rXteU...`), pas une clé externe — un pattern sain (un PDA ne peut être signé que par CPI
+   depuis le programme, jamais par une clé privée humaine).
+3. **`Loan` (1658 bytes réels — 24 bytes de plus que mon premier calcul, corrigé empiriquement)** :
+   `getProgramAccounts` filtré par `dataSize=1658` + `memcmp` sur `ledger[0].strategy` = `836SQM4...`
+   → **4 comptes Loan actifs** trouvés, tous avec le même champ `borrower` :
+   **`AVvbWjgpVrFtYVaUA9RfsGy8VfqMNeum5FdQfQkd9hqH`**.
+4. **Lecture de ce compte** : `owner = 11111111111111111111111111111111` (System Program),
+   `space = 0` → **un simple EOA (keypair standard), PAS une PDA du programme Squads V4**
+   (`SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf`).
 
-**Verdict honnête : cette vérification spécifique reste bloquée par les limites du RPC public
-gratuit (pas de `memcmp`), pas par un manque d'accès au code** — contrairement à ce qu'on pensait.
-Nécessiterait soit une clé RPC premium (Helius, Triton, QuickNode) supportant `memcmp` sans
-restriction, soit un accès différent (ex. l'indexer officiel InfraFi, hors-scope car derrière VPN).
-**Pas de finding soumis sur ce point — ni confirmé ni infirmé, honnêtement signalé comme bloqué.**
+**Constat factuel vérifié :** le texte officiel du scope affirme explicitement *"DAWN is the sole
+whitelisted borrower via a **Squads V4 multisig**"* — et liste "**borrower authorization**"
+explicitement comme in-scope. La réalité on-chain, aujourd'hui, sur les 4 prêts actifs réels, est
+une clé unique, pas un multisig N-sur-M.
+
+### Recherche d'un angle d'exploitation SANS compromission de la clé
+
+Avant de conclure, vérification de toutes les autres instructions qui touchent un `Loan` pour voir
+si l'une d'elles contournerait le `borrower` d'une façon exploitable :
+- `close_loan`, `lock_loan`, `unlock_loan` : exigent toutes `borrower` comme signataire — rien à
+  contourner ici.
+- `liquidate_ledger` : ne requiert PAS `borrower`, seulement un `liquidator` + `payer` — mais c'est
+  un mécanisme de liquidation standard (probablement gated par des conditions on-chain de défaut de
+  paiement qu'on ne peut pas lire sans le bytecode du programme), pas une faille liée au choix de
+  clé de DAWN.
+- `refinance_ledger`, `sell_ledger` : requièrent `refinance_admin`/`lender_auth` — des rôles
+  **globaux Loopscale** (`ProtocolAdminState`), pas DAWN — donc hors-scope ("Loopscale-operated
+  infrastructure") même si un souci existait là.
+
+**OSINT sur la clé `AVvbWjgpVrFtYVaUA9RfsGy8VfqMNeum5FdQfQkd9hqH`** (recherche web + GitHub code
+search, exhaustive) : **aucune fuite, aucune étiquette publique, aucune mention nulle part.** La clé
+n'est pas déjà exposée publiquement — sa compromission resterait hypothétique, pas un fait acquis.
+
+**Verdict final, honnête :** c'est un écart **factuel et vérifié** entre la documentation
+("Squads V4 multisig") et la réalité on-chain (clé unique) sur un point explicitement in-scope
+("borrower authorization"). Mais **aucun chemin d'exploitation sans compromission de cette clé n'a
+été trouvé**, malgré une recherche systématique (toutes les instructions touchant Loan + OSINT sur
+la clé elle-même). Ça tombe donc dans les deux clauses hors-scope par défaut d'Immunefi :
+*"Impacts involving centralization risks"* et *"Impacts caused by attacks requiring access to
+leaked keys/credentials"* — même verdict que le cas de l'autorité de pause USD.infra (notes/03).
+**Documenté comme fait vérifié, pas soumis comme finding**, conformément à la règle anti-inflation.
 
 ---
 
@@ -124,9 +151,11 @@ ce serait spéculatif de prétendre le contraire.
 |---|---|---|
 | Duplication des 2 comptes vault (ancienne question ouverte) | **Résolue** : deux vaults distincts légitimes, pas un doublon | Non (pas un bug, juste une clarification) |
 | Autorité `manager` du vault = clé unique | Confirmée, mais c'est une clé **Loopscale**, pas DAWN | **Non — hors-scope** ("Loopscale-operated infrastructure") |
-| Autorité borrow/repay DAWN-spécifique (`MarketInformation.authority`) vs. multisig Squads documenté | **Non vérifiable** avec le RPC public gratuit (memcmp refusé) | Bloqué, ni confirmé ni infirmé |
+| `MarketInformation.authority`/`.delegate` (DAWN) | **Résolu** (clé RPC Alchemy) : c'est le vault PDA lui-même, pas une clé externe | Non (sain, pas un bug) |
+| `Loan.borrower` réel des 4 prêts actifs vs. "Squads V4 multisig" documenté | **Résolu** (clé RPC Alchemy) : c'est un simple EOA, écart factuel confirmé avec le texte officiel — mais aucun chemin d'exploitation sans compromission trouvé (vérif. de toutes les instructions touchant Loan + OSINT sur la clé, négatif) | **Non — "centralization risk" + "leaked keys" explicitement hors-scope**, même verdict que le cas USD.infra pause-authority |
 | Écart prix AMM sUSD.infra vs NAV (piste C-18) | Confirmé, ~0.166%, mais volume quasi nul | **Non — "lack of liquidity impacts" explicitement hors-scope**, pas un bug de contrat |
 
-**Aucun nouveau finding à soumettre depuis ces deux passes.** Le seul fil qui reste théoriquement
-ouvert (l'autorité borrow/repay réelle de DAWN) nécessiterait un accès RPC premium pour être tranché
-— pas poursuivi ici faute de moyen à coût zéro.
+**Aucun nouveau finding à soumettre depuis ces deux passes.** Tous les fils ont été tranchés
+jusqu'au bout (grâce à la clé Alchemy fournie par Mathieu) : deux écarts factuels réels et vérifiés
+(manager Loopscale, borrower EOA) sont documentés honnêtement mais tombent dans des catégories
+explicitement hors-scope d'Immunefi en l'absence d'un chemin d'exploitation sans compromission.
