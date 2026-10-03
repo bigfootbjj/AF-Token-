@@ -20,7 +20,14 @@ contrat interrogé est le bytecode et le storage RÉELS copiés depuis le mainne
 
 ## SÉVÉRITÉ (proposée, à discuter)
 
-**Medium**, avec justification pour une révision à High si un consommateur downstream concret est identifié (voir "Points ouverts"). Pas de vol/perte de fonds démontré *sur cet asset lui-même* (le contrat ne détient aucun fonds) — mais un défaut de validation permanent et sans recours sur l'asset explicitement désigné in-scope pour "staleness/validation".
+**Medium — confirmé actif aujourd'hui, pas seulement théorique** (voir détail complet dans
+`06-live-eth_call-confirmation-and-severity.md`). Recherche du consommateur downstream : négative
+(GitHub, BscScan, DefiLlama, web, API publique de infrastructure.finance — aucune intégration BNB
+Chain trouvée). En l'absence de ce consommateur, pas de révision à High : pas de vol/perte de fonds
+démontré *sur cet asset lui-même* (le contrat ne détient aucun fonds). Mais contrairement à la
+version précédente de ce brouillon, ce n'est plus une simple hypothèse — **preuve en direct, avec les
+vrais chiffres actuels** (B ci-dessous) que le taux publié est déjà faux et que sa correction est
+déjà bloquée, maintenant.
 
 ## SCOPE
 
@@ -59,8 +66,19 @@ Aucune autre fonction du contrat (`setUpdater`, `transferOwnership`, ownership h
 
 ## IMPACT
 
-- **Direct, démontré :** l'oracle devient structurellement incapable de refléter une baisse réelle — défaut permanent, pas transitoire.
-- **Potentiel, non démontré faute d'accès :** si un protocole tiers BNB Chain price du collatéral/règlement sur ce taux, un attaquant pourrait extraire de la valeur sur l'écart prix-figé/vraie-valeur après une perte réelle. **Aucun consommateur downstream identifié** (recherche GitHub + web négative).
+- **Direct, démontré, ACTIF AUJOURD'HUI (pas hypothétique) :** l'historique complet du vault réel
+  (`GET /vault/solana/nav/history`, endpoint public de `api.infrastructure.finance`, 15 points du
+  genesis 2026-09-19 à aujourd'hui) montre que le taux réel du vault **n'a jamais, à aucun moment,
+  atteint la valeur publiée sur BNB Chain**. Taux réel maximum jamais enregistré (aujourd'hui même,
+  son point le plus haut à ce jour) : **1.0013803491389677**. Taux publié sur BNB, inchangé depuis le
+  2026-08-06 : **1.0095655102813623**. Écart actuel : **≈ 0,82 %**, et constant depuis le début de
+  l'historique mesurable. L'oracle BNB Chain est donc **déjà surévalué par rapport à la réalité**, pas
+  seulement "structurellement incapable de refléter une future baisse".
+- **Confirmé par simulation en direct (voir PREUVE DE CONCEPT) :** une tentative, avec la vraie clé
+  `_updater`, de publier aujourd'hui le vrai taux actuel du vault (correction légitime et honnête,
+  aucune malveillance) **échoue réellement, maintenant**, avec `ExchangeRateDecreased()` — confirmé
+  par `eth_call` en lecture seule sur 4 fournisseurs RPC indépendants.
+- **Potentiel, non démontré faute d'accès :** si un protocole tiers BNB Chain price du collatéral/règlement sur ce taux, un attaquant pourrait extraire de la valeur sur l'écart prix-figé/vraie-valeur. **Aucun consommateur downstream identifié** (recherche GitHub, BscScan, DefiLlama, web, et API publique de infrastructure.finance — toutes négatives, détail dans `06-live-eth_call-confirmation-and-severity.md`).
 
 ## PREUVE DE CONCEPT
 
@@ -94,6 +112,32 @@ Logs:
   Honest corrected rate after a 1% real loss: 999469855178548677
   setExchangeRate(correctedLowerRate) REVERTED: ExchangeRateDecreased()
 ```
+
+### Confirmation complémentaire — simulation `eth_call` live avec les VRAIS chiffres actuels
+
+Au-delà du PoC Foundry (fork avec un scénario de baisse de 1%), une seconde confirmation a été
+produite **directement contre le mainnet réel, en lecture seule** (`eth_call`, aucune transaction
+diffusée, aucun état modifié — conforme à la règle Immunefi "pas de test sur mainnet déployé"), en
+utilisant le **vrai taux réel actuel du vault** (1.0013803491389677, via l'API publique
+`api.infrastructure.finance/vault/solana/nav`) plutôt qu'un scénario hypothétique :
+
+```
+calldata: setExchangeRate(1001380349138967700)   // = 0x530a09e4...0de59e1f3b7c1c94
+from:     0x7ad7eee24ace80bb84d1bd8fe5798b852eaa0718   (le VRAI updater actuel)
+to:       0x15a6f1f2705b3916b5b1d2b19b10f320778744c1   (le VRAI contrat déployé)
+```
+
+Résultat, confirmé indépendamment sur 4 fournisseurs RPC publics (nodereal, publicnode, defibit,
+bsc-dataseed) :
+
+```
+{"error":{"code":3,"message":"execution reverted: 0x6143ab0a","data":"0x6143ab0a"}}
+```
+
+`0x6143ab0a` = selector exact de `ExchangeRateDecreased()`. Détail complet, décodage, et
+méthodologie dans `06-live-eth_call-confirmation-and-severity.md`. **Conclusion : la correction
+légitime est bloquée aujourd'hui, avec les vrais chiffres d'aujourd'hui — ce n'est plus un scénario
+hypothétique de "1% de perte un jour".**
 
 ## POURQUOI PAS DOUBLON
 
@@ -209,7 +253,14 @@ Comparer la croissance contre une référence fixe (ex. taux et timestamp d'il y
 
 ## Points ouverts avant soumission (les deux findings)
 
-1. **Sévérité réelle de Finding 1** — dépend d'identifier un consommateur downstream sur BNB Chain. Recherche GitHub/web négative à ce stade.
-2. **Historique des mises à jour** (Finding 1) — non récupéré (coût RPC élevé, limite de plage de blocs). Pas bloquant pour le finding, structurel et indépendant de la cadence historique.
+1. **Sévérité réelle de Finding 1** — recherche du consommateur downstream exhaustive (GitHub,
+   BscScan, DefiLlama, web, API publique infrastructure.finance) : **négative**. Severité retenue :
+   **Medium**, confirmée active aujourd'hui par preuve live (pas de révision à High faute de
+   consommateur concret identifié — voir `06-live-eth_call-confirmation-and-severity.md` pour le
+   raisonnement complet). Si un jury Immunefi a accès à une intégration non publique, la sévérité
+   pourrait monter — non affirmé ici faute de preuve.
+2. ~~Historique des mises à jour non récupéré~~ — **résolu** : l'historique complet du vault réel
+   (`/vault/solana/nav/history`, 15 points depuis le genesis) prouve que le taux réel n'a **jamais**
+   atteint le taux publié sur BNB, à aucun moment de son histoire. Voir note 06.
 3. Confirmer qu'aucune règle de staleness cachée côté `infrafi-api` ne compense déjà ces défauts off-chain (code non accessible).
-4. Les deux PoC tournent contre un `anvil` local chargé avec le bytecode/storage réels (contournement d'une limitation anti-abus `eth_getProof`-en-batch commune à tous les RPC BSC publics testés) — voir `../poc/README.md` pour la justification complète et comment relancer avec un RPC premium si disponible.
+4. Les deux PoC tournent contre un `anvil` local chargé avec le bytecode/storage réels (contournement d'une limitation anti-abus `eth_getProof`-en-batch commune à tous les RPC BSC publics testés) — voir `../poc/README.md` pour la justification complète et comment relancer avec un RPC premium si disponible. La confirmation complémentaire par `eth_call` live (point 1 ci-dessus) ne dépend pas de ce contournement — elle interroge directement le mainnet réel, en lecture seule.
