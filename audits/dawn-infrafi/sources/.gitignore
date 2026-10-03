@@ -1,0 +1,5 @@
+# solidity-auditor v4 transient scan state — per-machine, not shared (see SKILL.md).
+# The ledger (.solidity-auditor/memory.tsv) and runs/ are local audit memory, not a deliverable.
+# The .audit-* bundle dir is build scratch space, auto-deleted at the end of every scan.
+.solidity-auditor/
+.audit-*/
