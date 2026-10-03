@@ -255,7 +255,7 @@ Logs:
   Excess over the documented annual ceiling (1e18 = 100%): 17779881876448649   (+1.79% relative)
 ```
 
-Chaque appel individuel passe `ApyCeilingExceeded` — aucun n'est "faux" isolément. Le dépassement grandit avec la fréquence des appels et tend vers `e^0.2 - 1 ≈ 22.14%` de croissance réelle (contre 20% documentés) à fréquence très élevée — démontré mathématiquement de façon convergente par les 12 agents du scan formel (voir leurs traces complètes, ex. avec un plafond à 100% pour amplifier l'effet : 12 appels mensuels → ×2.25 au lieu de ×2.0 attendu, soit +12.5%).
+Chaque appel individuel passe `ApyCeilingExceeded` — aucun n'est "faux" isolément. Le dépassement grandit avec la fréquence des appels et tend vers `e^0.2 - 1 ≈ 22.14%` de croissance réelle (contre 20% documentés) à fréquence très élevée.
 
 ## POURQUOI PAS DOUBLON / EXCLU
 
