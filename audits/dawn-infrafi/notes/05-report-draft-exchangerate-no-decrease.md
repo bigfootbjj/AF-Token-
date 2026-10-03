@@ -18,16 +18,25 @@ contrat interrogé est le bytecode et le storage RÉELS copiés depuis le mainne
 
 `USDTelExchangeRate.setExchangeRate` ne peut jamais publier une baisse du taux de change, gelant le prix de l'oracle BNB Chain indéfiniment au-dessus de sa vraie valeur après toute perte réelle du vault.
 
-## SÉVÉRITÉ (proposée, à discuter)
+## SÉVÉRITÉ (corrigée — alignée sur le mapping officiel du programme)
 
-**Medium — confirmé actif aujourd'hui, pas seulement théorique** (voir détail complet dans
-`06-live-eth_call-confirmation-and-severity.md`). Recherche du consommateur downstream : négative
-(GitHub, BscScan, DefiLlama, web, API publique de infrastructure.finance — aucune intégration BNB
-Chain trouvée). En l'absence de ce consommateur, pas de révision à High : pas de vol/perte de fonds
-démontré *sur cet asset lui-même* (le contrat ne détient aucun fonds). Mais contrairement à la
-version précédente de ce brouillon, ce n'est plus une simple hypothèse — **preuve en direct, avec les
-vrais chiffres actuels** (B ci-dessous) que le taux publié est déjà faux et que sa correction est
-déjà bloquée, maintenant.
+**LOW**, selon le mapping officiel sévérité↔impact publié dans le JSON du programme Immunefi
+(champ `impacts`, pas une grille générique) : la seule catégorie smart-contract qui correspond à ce
+finding sans consommateur downstream démontré est *"Contract fails to deliver promised returns, but
+doesn't lose value"*, explicitement listée à **LOW** pour ce programme. Aucune autre catégorie ne
+s'applique honnêtement : pas de "Permanent freezing of funds" / "Protocol insolvency" (Critical) ni
+de "Griefing" (Medium) sans dommage concret démontré à un tiers — le contrat lui-même ne détient
+aucun fonds et aucun consommateur downstream n'a pu être identifié (recherche exhaustive : GitHub,
+BscScan, DefiLlama, web, API publique de infrastructure.finance — toutes négatives).
+
+**Ce qui distingue quand même ce finding d'un simple "Low" théorique :** confirmé **actif
+aujourd'hui**, pas seulement en hypothèse de baisse future — preuve en direct, avec les vrais
+chiffres actuels (section B de `06-live-eth_call-confirmation-and-severity.md`), que le taux publié
+est déjà faux (surévalué d'environ 0,82 % depuis le 2026-08-06) et que sa correction honnête est
+déjà bloquée, maintenant, par la vraie clé `_updater`. Si un jury Immunefi identifie un consommateur
+concret causant un freezing de fonds ou une insolvabilité en aval, la sévérité remonterait sous une
+catégorie différente ("Permanent freezing of funds" ou "Protocol insolvency", Critical) — **non
+affirmé ici faute de preuve**, conformément à la règle anti-inflation.
 
 ## SCOPE
 
@@ -194,9 +203,19 @@ Aucun known issue officiel ne couvre ça (les 5 listés : JWT localStorage, ripc
 
 Le plafond `_apyCeiling` de `setExchangeRate` borne la croissance simple par appel, pas la croissance composée réelle — des mises à jour fréquentes et parfaitement ordinaires (mensuelles, quotidiennes) font croître le taux au-delà du plafond documenté, sans aucune malveillance.
 
-## SÉVÉRITÉ (proposée, à discuter)
+## SÉVÉRITÉ (corrigée — alignée sur le mapping officiel du programme)
 
-**Low-Medium.** Chaque appel individuel respecte le contrôle ; le dépassement n'apparaît qu'à l'échelle de la séquence. Nécessite la clé `_updater`, mais — point central — **aucune compromission n'est nécessaire** : un service de publication honnête, à cadence normale, viole déjà la garantie documentée ("a compromised updater can only push rates (bounded by the APY ceiling)" — commentaire du contrat lui-même, qui s'avère faux même sans compromission).
+**LOW**, même raisonnement que Finding 1 : aucune catégorie officielle smart-contract du programme
+ne correspond mieux que *"Contract fails to deliver promised returns, but doesn't lose value"*
+(LOW) — ici le "promised return" étant la garantie documentée dans le contrat lui-même qu'un
+`_updater` (même compromis) ne peut faire croître le taux au-delà du plafond annoncé. Pas de perte
+de valeur démontrée, pas de consommateur downstream identifié qui serait lésé par cet excès. Chaque
+appel individuel respecte le contrôle ; le dépassement n'apparaît qu'à l'échelle de la séquence.
+Point notable conservé : **aucune compromission n'est nécessaire** — un service de publication
+honnête, à cadence normale, viole déjà la garantie documentée ("a compromised updater can only push
+rates (bounded by the APY ceiling)" — commentaire du contrat lui-même, qui s'avère faux même sans
+compromission). Cette robustesse de la preuve (12/12 agents convergents) justifie de le signaler
+malgré la sévérité officielle basse — mais honnêtement, LOW et non Medium.
 
 ## SCOPE
 
@@ -253,12 +272,16 @@ Comparer la croissance contre une référence fixe (ex. taux et timestamp d'il y
 
 ## Points ouverts avant soumission (les deux findings)
 
-1. **Sévérité réelle de Finding 1** — recherche du consommateur downstream exhaustive (GitHub,
-   BscScan, DefiLlama, web, API publique infrastructure.finance) : **négative**. Severité retenue :
-   **Medium**, confirmée active aujourd'hui par preuve live (pas de révision à High faute de
-   consommateur concret identifié — voir `06-live-eth_call-confirmation-and-severity.md` pour le
-   raisonnement complet). Si un jury Immunefi a accès à une intégration non publique, la sévérité
-   pourrait monter — non affirmé ici faute de preuve.
+1. **Sévérité réelle de Finding 1 et 2** — recherche du consommateur downstream exhaustive (GitHub,
+   BscScan, DefiLlama, web, API publique infrastructure.finance) : **négative**. Severité retenue,
+   alignée sur le mapping officiel sévérité↔impact du programme (champ `impacts` du JSON, pas une
+   grille générique) : **LOW** pour les deux findings — seule catégorie applicable sans
+   consommateur downstream démontré : *"Contract fails to deliver promised returns, but doesn't lose
+   value"*, officiellement LOW pour ce programme. Confirmé actif aujourd'hui par preuve live (pas
+   seulement hypothétique), voir `06-live-eth_call-confirmation-and-severity.md`. Si un jury
+   Immunefi a accès à une intégration non publique causant un freezing de fonds ou une
+   insolvabilité, la sévérité pourrait monter sous une catégorie Critical différente — non affirmé
+   ici faute de preuve.
 2. ~~Historique des mises à jour non récupéré~~ — **résolu** : l'historique complet du vault réel
    (`/vault/solana/nav/history`, 15 points depuis le genesis) prouve que le taux réel n'a **jamais**
    atteint le taux publié sur BNB, à aucun moment de son histoire. Voir note 06.

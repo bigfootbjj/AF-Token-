@@ -113,20 +113,39 @@ scénario futur hypothétique.
   hausse publiée "rattraperait" näivement l'écart sans jamais exposer la cause racine — mais la
   *prochaine baisse réelle*, elle, resterait bloquée pour toujours, perpétuant le problème).
 
-**Verdict de sévérité : Medium**, et non Low ni High/Critical :
-- **Pas Low** : ce n'est plus hypothétique — le défaut est démontré actif, aujourd'hui, avec des
-  données live, sur l'actif explicitement en scope ("rate-publishing authorization,
-  staleness/validation" — texte officiel). Ce n'est pas un simple "nice-to-have" théorique.
-- **Pas High/Critical** : aucune perte de fonds n'est démontrée ni même identifiable, faute de
-  consommateur downstream confirmé. Le contrat lui-même ne détient aucun actif ("freezing of
-  funds" ne s'applique pas directement). Sans preuve d'un mécanisme d'extraction économique
-  concret, gonfler à High serait contraire à la règle anti-inflation du protocole v7.2.
-- **Medium** correspond à la catégorie Immunefi typique "contract fails to deliver promised
-  returns, but doesn't lose value" / "permanent, verifiable staleness of a published value with no
-  on-chain remediation path" — c'est exactement ce qui est démontré ici, avec preuve en direct.
+**Verdict de sévérité : LOW — corrigé après vérification du mapping officiel du programme.**
+
+Correction importante : une première passe avait conclu "Medium" par analogie avec la grille
+Immunefi générique. En relisant le champ `impacts` du JSON **officiel du programme DAWN** lui-même
+(pas une grille générique), le mapping exact est :
+
+```
+LOW    | Contract fails to deliver promised returns, but doesn't lose value
+MEDIUM | Griefing (e.g. no profit motive for an attacker, but damage to the users or the protocol)
+MEDIUM | Block stuffing / Theft of gas / Unbounded gas consumption / contract unable to operate due to lack of funds
+CRITICAL | Permanent freezing of funds / Protocol insolvency / ...
+```
+
+Le seul impact qui correspond honnêtement à ce finding, sans consommateur downstream démontré, est
+*"Contract fails to deliver promised returns, but doesn't lose value"* — **officiellement LOW pour
+ce programme**, pas Medium. "Griefing" (Medium) exigerait un dommage concret démontré à des
+utilisateurs ou au protocole, ce qu'on n'a pas (on a un oracle stale, pas un dommage tracé à un
+tiers). Donc :
+
+- **Pas Low "théorique"** : ce n'est pas un simple nice-to-have — le défaut est démontré actif,
+  aujourd'hui, avec des données live, sur l'actif explicitement en scope ("rate-publishing
+  authorization, staleness/validation"). Mais actif ≠ sévérité plus haute : le mapping officiel du
+  programme classe quand même cette catégorie d'impact en LOW.
+- **Pas Medium/High/Critical** : aucune perte de fonds n'est démontrée ni même identifiable, faute
+  de consommateur downstream confirmé. Le contrat lui-même ne détient aucun actif ("freezing of
+  funds" ne s'applique pas). Gonfler au-delà de LOW sans preuve d'un mécanisme d'extraction
+  économique concret serait contraire à la règle anti-inflation du protocole v7.2 — **et maintenant
+  contraire aussi au mapping officiel du programme lui-même**, qui est la source de vérité qui
+  prime sur toute grille générique.
 
 Si un jury Immunefi identifie un consommateur concret (accès à du code non public, un partenaire
-confidentiel, etc.), la sévérité pourrait légitimement monter à High — mais ça n'est PAS affirmé ici
+confidentiel, etc.) causant un freezing de fonds ou une insolvabilité, la sévérité pourrait
+légitimement monter à Critical sous une catégorie différente — mais ça n'est PAS affirmé ici
 faute de preuve, conformément à la règle "jamais gonfler, jamais fabriquer".
 
 ## Statut
