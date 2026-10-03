@@ -197,8 +197,6 @@ Aucun known issue officiel ne couvre ça (les 5 listés : JWT localStorage, ripc
 
 # FINDING 2 — Le plafond de croissance annuelle se compose au lieu de borner
 
-**Convergence exceptionnelle : les 12/12 agents du scan formel `solidity-auditor v4` (lancé indépendamment sur ce même contrat) ont identifié ce bug unanimement, chacun avec sa propre preuve mathématique indépendante.**
-
 ## TITRE
 
 Le plafond `_apyCeiling` de `setExchangeRate` borne la croissance simple par appel, pas la croissance composée réelle — des mises à jour fréquentes et parfaitement ordinaires (mensuelles, quotidiennes) font croître le taux au-delà du plafond documenté, sans aucune malveillance.
@@ -214,8 +212,7 @@ appel individuel respecte le contrôle ; le dépassement n'apparaît qu'à l'éc
 Point notable conservé : **aucune compromission n'est nécessaire** — un service de publication
 honnête, à cadence normale, viole déjà la garantie documentée ("a compromised updater can only push
 rates (bounded by the APY ceiling)" — commentaire du contrat lui-même, qui s'avère faux même sans
-compromission). Cette robustesse de la preuve (12/12 agents convergents) justifie de le signaler
-malgré la sévérité officielle basse — mais honnêtement, LOW et non Medium.
+compromission). Honnêtement, LOW et non Medium.
 
 ## SCOPE
 
