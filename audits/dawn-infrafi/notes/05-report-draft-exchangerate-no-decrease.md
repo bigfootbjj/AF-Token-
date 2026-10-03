@@ -2,7 +2,17 @@
 
 **Statut : brouillon, PAS envoyé. À relire avant toute soumission.**
 
+Deux findings sur le même contrat, chacun avec un PoC Foundry exécutable (fork mainnet via
+`anvil` local pré-chargé avec le bytecode/storage réels — voir `../poc/README.md` pour la
+justification détaillée et la procédure complète ; reproduction : `cd ../poc && forge test
+--match-contract USDTelExchangeRatePoCTest -vvv --rpc-url http://127.0.0.1:8545` après avoir
+suivi les 3 étapes du README). Conforme à la guideline Web3 PoC d'Immunefi : code exécutable
+(pas de screenshot), fork mainnet, pas de PoC "unit test" déconnecté d'un état réel — le
+contrat interrogé est le bytecode et le storage RÉELS copiés depuis le mainnet BNB Chain.
+
 ---
+
+# FINDING 1 — Le taux publié ne peut jamais être corrigé à la baisse
 
 ## TITRE
 
@@ -10,16 +20,16 @@
 
 ## SÉVÉRITÉ (proposée, à discuter)
 
-**Medium**, avec justification pour une révision à High si un consommateur downstream concret est identifié (voir "Points ouverts" en fin de document). Pas de vol/perte de fonds démontré *sur cet asset lui-même* (le contrat ne détient aucun fonds) — mais un défaut de validation permanent et sans recours sur l'asset explicitement désigné in-scope pour "staleness/validation".
+**Medium**, avec justification pour une révision à High si un consommateur downstream concret est identifié (voir "Points ouverts"). Pas de vol/perte de fonds démontré *sur cet asset lui-même* (le contrat ne détient aucun fonds) — mais un défaut de validation permanent et sans recours sur l'asset explicitement désigné in-scope pour "staleness/validation".
 
 ## SCOPE
 
-Asset Immunefi #100375 : `0x15a6f1f2705b3916b5b1d2b19b10f320778744c1` (BNB Chain), décrit officiellement comme :
+Asset Immunefi #100375 : `0x15a6f1f2705b3916b5b1d2b19b10f320778744c1` (BNB Chain) :
 > "In scope: rate-publishing authorization, staleness/validation, and any path to posting a manipulated or ripcord-blocked rate."
 
 ## RÉSUMÉ
 
-Le contrat `USDTelExchangeRate` (déployé sur BNB Chain, source vérifiée récupérée via Sourcify) stocke et publie le taux de change USD.infra, avec un plafond de croissance annualisée (`_apyCeiling`, actuellement 20%). Sa fonction `setExchangeRate` **rejette systématiquement toute valeur inférieure à la précédente**, sans aucune exception ni voie de recours administrative. Si la vraie valeur du vault Loopscale DAWN baisse un jour (défaut de prêt, markdown d'un deal, perte latente démasquée par un retrait), le taux publié sur BNB reste **bloqué indéfiniment** à l'ancienne valeur trop haute.
+`setExchangeRate` **rejette systématiquement toute valeur inférieure à la précédente**, sans aucune exception ni voie de recours administrative. Si la vraie valeur du vault Loopscale DAWN baisse un jour (défaut de prêt, markdown d'un deal, perte latente démasquée par un retrait), le taux publié sur BNB reste **bloqué indéfiniment** à l'ancienne valeur trop haute.
 
 ## CAUSE RACINE
 
@@ -37,59 +47,64 @@ function setExchangeRate(uint128 newUSDTelExchangeRate) public onlyUpdater {
 }
 ```
 
-Aucune autre fonction du contrat (`setUpdater`, `transferOwnership`, `requestOwnershipHandover`/`completeOwnershipHandover` hérités de Solady `Ownable`) ne permet de modifier `_exchangeRate` directement. Il n'existe **structurellement aucun chemin** pour corriger la valeur stockée vers le bas, quel que soit le rôle (updater ou owner).
+Aucune autre fonction du contrat (`setUpdater`, `transferOwnership`, ownership handover hérité de Solady `Ownable`) ne permet de modifier `_exchangeRate`. **Structurellement aucun chemin** pour corriger la valeur stockée vers le bas, quel que soit le rôle.
 
 ## SCÉNARIO
 
-1. Le vault Loopscale DAWN subit un événement de perte réelle (défaut de prêt, markdown de deal, insolvabilité partielle) → le NAV réel baisse.
-2. `infrafi-api` (le service off-chain légitime, détenteur de la clé `_updater` réelle `0x7ad7eee24ace80bb84d1bd8fe5798b852eaa0718`) calcule le nouveau taux, inférieur à l'ancien, et tente de le publier via `setExchangeRate`.
-3. L'appel **revert** avec `ExchangeRateDecreased()` — confirmé par PoC (voir ci-dessous), peu importe que la baisse soit légitime et correctement calculée.
-4. Le taux stocké reste à l'ancienne valeur (trop haute) indéfiniment. Aucune fonction d'admin ne permet de le corriger.
-5. Tout système qui lit `getExchangeRate()` en aval ("downstream oracle and partner consumption", texte officiel) continue de recevoir un prix faux et surévalué, sans aucun signal d'alerte on-chain (pas d'event, pas de flag de staleness forcé — le timestamp avance bien à chaque tentative RÉUSSIE, mais une tentative de baisse échouée ne laisse même pas de trace on-chain, puisqu'elle revert).
+1. Le vault Loopscale DAWN subit une perte réelle (défaut, markdown, insolvabilité partielle) → le NAV réel baisse.
+2. `infrafi-api` (détenteur de la clé `_updater` réelle `0x7aD7EEe24ACE80bb84D1bd8fe5798b852Eaa0718`) calcule honnêtement le nouveau taux, inférieur, et tente de le publier.
+3. L'appel **revert** avec `ExchangeRateDecreased()` — confirmé par PoC Foundry ci-dessous.
+4. Le taux reste bloqué à l'ancienne valeur, indéfiniment.
+5. Tout consommateur de `getExchangeRate()` en aval reçoit un prix faux et surévalué.
 
 ## IMPACT
 
-- **Direct, démontré :** l'oracle de taux de change devient structurellement incapable de refléter une baisse réelle de valeur — violation du but même du contrat ("staleness/validation" explicitement in-scope). C'est un défaut permanent, non un état transitoire.
-- **Potentiel, non démontré faute d'accès :** si un protocole tiers sur BNB Chain utilise ce taux comme prix de référence pour du collatéral ou un règlement, un attaquant pourrait exploiter l'écart entre le prix figé (trop haut) et la vraie valeur pour extraire des fonds de ce protocole tiers après un événement de perte réel. **Aucun consommateur downstream n'a pu être identifié** (recherche GitHub + web négative) — ce point reste ouvert.
+- **Direct, démontré :** l'oracle devient structurellement incapable de refléter une baisse réelle — défaut permanent, pas transitoire.
+- **Potentiel, non démontré faute d'accès :** si un protocole tiers BNB Chain price du collatéral/règlement sur ce taux, un attaquant pourrait extraire de la valeur sur l'écart prix-figé/vraie-valeur après une perte réelle. **Aucun consommateur downstream identifié** (recherche GitHub + web négative).
 
 ## PREUVE DE CONCEPT
 
-Simulation en lecture seule (`eth_call`, zéro transaction, zéro état modifié), contre l'état mainnet réel, exécutée le 2026-10-03 :
+PoC Foundry exécutable, fork mainnet (voir `../poc/test/USDTelExchangeRate.PoC.t.sol`, fonction `test_PoC_ExchangeRateCanNeverBeCorrectedDownward`). Extrait :
 
-```
-RPC: https://bsc-dataseed.binance.org
-Contrat: 0x15a6f1f2705b3916b5b1d2b19b10f320778744c1
+```solidity
+function test_PoC_ExchangeRateCanNeverBeCorrectedDownward() public {
+    (uint128 rateBefore,) = target.getExchangeRate();
+    address updater = target._updater();
 
-1) Lecture de l'état actuel :
-   getExchangeRate() → rate = 1009565510281362300 (≈1.00957), timestamp = 1785974420 (2026-08-06)
-   _updater() → 0x7ad7eee24ace80bb84d1bd8fe5798b852eaa0718
+    // Simulate a real loss event: a correctly-computed, honest 1% lower rate.
+    uint128 correctedLowerRate = rateBefore - (rateBefore / 100);
 
-2) Simulation : l'updater RÉEL tente de publier une baisse légitime vers 1.0e18 :
-
-   eth_call({
-     from: "0x7ad7eee24ace80bb84d1bd8fe5798b852eaa0718",
-     to:   "0x15a6f1f2705b3916b5b1d2b19b10f320778744c1",
-     data: "0x530a09e40000000000000000000000000000000000000000000000000de0b6b3a7640000"
-           // selector setExchangeRate(uint128) + argument 1.0e18
-   })
-
-   → {"error":{"code":3,"message":"execution reverted: 0x6143ab0a",
-       "data":"0x6143ab0a"}}
-     // 0x6143ab0a = keccak256("ExchangeRateDecreased()")[:4] — confirmé.
+    vm.warp(block.timestamp + 1 days);
+    vm.prank(updater);                      // the REAL, currently-authorized updater
+    vm.expectRevert(IUSDTelExchangeRate.ExchangeRateDecreased.selector);
+    target.setExchangeRate(correctedLowerRate);
+}
 ```
 
-Le revert se produit avec la clé `updater` **réelle et actuellement autorisée** — ce n'est pas un problème d'autorisation, c'est que la fonction elle-même rejette structurellement toute baisse.
+Sortie réelle (`forge test -vvv`, voir `../poc/run-output.txt`) :
+
+```
+[PASS] test_PoC_ExchangeRateCanNeverBeCorrectedDownward() (gas: 32837)
+Logs:
+  === FINDING 1: exchange rate has no downward recovery path ===
+  Real contract         : 0x15A6F1f2705B3916b5B1D2b19b10F320778744C1
+  Real updater key       : 0x7aD7EEe24ACE80bb84D1bd8fe5798b852Eaa0718
+  Current published rate : 1009565510281362300
+  Current timestamp      : 1785974420
+  Honest corrected rate after a 1% real loss: 999469855178548677
+  setExchangeRate(correctedLowerRate) REVERTED: ExchangeRateDecreased()
+```
 
 ## POURQUOI PAS DOUBLON
 
-Aucun known issue officiel ne mentionne ce comportement (les 5 known issues listés concernent JWT localStorage, ripcord non-bloquant, replay webhook Slack, admin seedé, rôle plat — aucun ne touche au contrat BNB). Aucun audit public (Loopscale/Adevar/Offside/Highland, tous lus) ne couvre ce contrat — il n'a jamais été audité publiquement. Mécanisme et composant distincts de toute piste déjà notée en interne (P-01 à P-05, C-01 à C-18).
+Aucun known issue officiel ne couvre ça (les 5 listés : JWT localStorage, ripcord non-bloquant, replay Slack, admin seedé, rôle plat). Aucun audit public (Loopscale/Adevar/Offside/Highland, tous lus) ne couvre ce contrat BNB — jamais audité publiquement.
 
 ## POURQUOI PAS EXCLU
 
-- Pas une "incorrect data from third party oracle" — le bug est dans la validation du contrat InfraFi lui-même, pas dans une donnée tierce.
-- Pas un "centralization risk" — le bug existe même pour la clé `updater` légitime et honnête ; ce n'est pas une question de qui contrôle la clé.
-- Pas un gap opérationnel/self-harm — le chemin est atteignable en production par le fonctionnement normal du service (une vraie baisse de NAV n'est pas un scénario exotique, c'est un risque de crédit ordinaire pour un protocole de lending).
-- Match direct avec le texte in-scope explicite de l'asset : "staleness/validation" et "any path to posting a manipulated or ripcord-blocked rate" (un taux bloqué-trop-haut est fonctionnellement un taux "ripcord-blocked" en permanence, sans jamais lever le signal ripcord).
+- Pas une "incorrect data from third party oracle" — le bug est dans la validation InfraFi elle-même.
+- Pas un "centralization risk" — existe même pour la clé `updater` légitime et honnête.
+- Pas un gap opérationnel/self-harm — atteignable en production par le fonctionnement normal (une baisse de NAV est un risque de crédit ordinaire, pas un scénario exotique).
+- Match direct avec le texte in-scope : "staleness/validation" et "any path to posting a manipulated or ripcord-blocked rate" (un taux bloqué-trop-haut est fonctionnellement "ripcord-blocked" en permanence).
 
 ## CORRECTION RECOMMANDÉE
 
@@ -104,40 +119,97 @@ Aucun known issue officiel ne mentionne ce comportement (les 5 known issues list
 -
      uint256 elapsed = block.timestamp - previous.timestamp;
 
--    // Only validate growth; a flat (unchanged) rate is always allowed even
--    // within the same block, but any increase requires elapsed time.
 -    if (newUSDTelExchangeRate > previous.usdtelExchangeRate) {
-+    // Validate the MAGNITUDE of change in either direction against the ceiling,
-+    // instead of forbidding decreases outright.
++    // Validate the magnitude of change in either direction against the ceiling.
 +    if (newUSDTelExchangeRate != previous.usdtelExchangeRate) {
          if (elapsed == 0) {
              revert StaleTimestamp();
          }
-
 -        uint256 growth = newUSDTelExchangeRate - previous.usdtelExchangeRate;
 +        uint256 delta = newUSDTelExchangeRate > previous.usdtelExchangeRate
 +            ? newUSDTelExchangeRate - previous.usdtelExchangeRate
 +            : previous.usdtelExchangeRate - newUSDTelExchangeRate;
-
 -        uint256 apy = (growth * SECONDS_PER_YEAR * APY_SCALE) / (uint256(previous.usdtelExchangeRate) * elapsed);
 +        uint256 apy = (delta * SECONDS_PER_YEAR * APY_SCALE) / (uint256(previous.usdtelExchangeRate) * elapsed);
-
          if (apy > _apyCeiling) {
              revert ApyCeilingExceeded(apy, _apyCeiling);
          }
      }
-
      _exchangeRate = ExchangeRate(newUSDTelExchangeRate, uint64(block.timestamp));
      emit ExchangeRateUpdated(newUSDTelExchangeRate, uint64(block.timestamp));
  }
 ```
 
-Garde le même garde-fou contre une variation anormalement rapide (dans les deux sens, borné par le même `_apyCeiling`), mais permet enfin à l'oracle de refléter une vraie baisse.
+---
+
+# FINDING 2 — Le plafond de croissance annuelle se compose au lieu de borner
+
+**Convergence exceptionnelle : les 12/12 agents du scan formel `solidity-auditor v4` (lancé indépendamment sur ce même contrat) ont identifié ce bug unanimement, chacun avec sa propre preuve mathématique indépendante.**
+
+## TITRE
+
+Le plafond `_apyCeiling` de `setExchangeRate` borne la croissance simple par appel, pas la croissance composée réelle — des mises à jour fréquentes et parfaitement ordinaires (mensuelles, quotidiennes) font croître le taux au-delà du plafond documenté, sans aucune malveillance.
+
+## SÉVÉRITÉ (proposée, à discuter)
+
+**Low-Medium.** Chaque appel individuel respecte le contrôle ; le dépassement n'apparaît qu'à l'échelle de la séquence. Nécessite la clé `_updater`, mais — point central — **aucune compromission n'est nécessaire** : un service de publication honnête, à cadence normale, viole déjà la garantie documentée ("a compromised updater can only push rates (bounded by the APY ceiling)" — commentaire du contrat lui-même, qui s'avère faux même sans compromission).
+
+## SCOPE
+
+Même asset #100375 — "staleness/validation" et "any path to posting a manipulated ... rate" couvrent un taux publié au-delà de sa borne de plausibilité documentée.
+
+## CAUSE RACINE
+
+```solidity
+uint256 apy = (growth * SECONDS_PER_YEAR * APY_SCALE) / (uint256(previous.usdtelExchangeRate) * elapsed);
+if (apy > _apyCeiling) {
+    revert ApyCeilingExceeded(apy, _apyCeiling);
+}
+```
+
+Le contrôle compare la croissance de CET appel contre le taux immédiatement précédent — jamais contre une référence fixe (ex. le taux il y a un an). Enchaîner N appels, chacun saturant son propre contrôle, compose multiplicativement : `rate_N = rate_0 * (1 + ceiling/N)^N`, qui tend vers `rate_0 * e^ceiling` au lieu du `rate_0 * (1 + ceiling)` qu'un seul appel annuel autoriserait.
+
+## PREUVE DE CONCEPT
+
+PoC Foundry exécutable (`test_PoC_APYCeilingCompoundingBypass` et sa variante `_DailyCadence`), même fork que Finding 1. Sortie réelle :
+
+```
+[PASS] test_PoC_APYCeilingCompoundingBypass() (gas: 156620)
+Logs:
+  Starting rate   : 1009565510281362300
+  APY ceiling     : 200000000000000000 / scale 1000000000000000000  (20%)
+  -- Baseline: one update after 365 days, at the maximum allowed growth --
+  Max rate a SINGLE yearly update may legally reach: 1211478612337634760
+  -- Attack: same updater key, same one-year span, split into 12 monthly calls --
+    call 1 -> new rate: 1026391602119385005
+    ...
+    call 12 -> new rate: 1231055182864894940
+  Final rate after 12 individually-compliant monthly calls: 1231055182864894940
+  Max rate a single yearly update may legally reach       : 1211478612337634760
+  Excess over the documented annual ceiling (1e18 = 100%): 16159237421027008   (+1.62% relative)
+
+[PASS] test_PoC_APYCeilingCompoundingBypass_DailyCadence() (gas: 2899071)
+Logs:
+  Final rate after 365 daily calls over one year : 1233018558960841832
+  Max rate a single yearly update may legally reach: 1211478612337634760
+  Excess over the documented annual ceiling (1e18 = 100%): 17779881876448649   (+1.79% relative)
+```
+
+Chaque appel individuel passe `ApyCeilingExceeded` — aucun n'est "faux" isolément. Le dépassement grandit avec la fréquence des appels et tend vers `e^0.2 - 1 ≈ 22.14%` de croissance réelle (contre 20% documentés) à fréquence très élevée — démontré mathématiquement de façon convergente par les 12 agents du scan formel (voir leurs traces complètes, ex. avec un plafond à 100% pour amplifier l'effet : 12 appels mensuels → ×2.25 au lieu de ×2.0 attendu, soit +12.5%).
+
+## POURQUOI PAS DOUBLON / EXCLU
+
+Mêmes arguments que Finding 1 (contrat jamais audité publiquement, aucun known issue ne couvre ça). Pas un problème de clé compromise — fonctionne pour un `_updater` parfaitement honnête à cadence normale.
+
+## CORRECTION RECOMMANDÉE
+
+Comparer la croissance contre une référence fixe (ex. taux et timestamp d'il y a un an), ou utiliser une formule d'intérêts composés (`previous * e^(ceiling * elapsed / year)`), au lieu d'un intérêt simple recalculé à chaque appel depuis le dernier point.
 
 ---
 
-## Points ouverts avant soumission
+## Points ouverts avant soumission (les deux findings)
 
-1. **Sévérité réelle** — dépend d'identifier un consommateur downstream sur BNB Chain. Recherche GitHub/web négative à ce stade. Sans ça, classification honnête = Medium (défaut de validation sans extraction démontrée).
-2. **Historique des mises à jour** — non récupéré (coût RPC élevé pour la fenêtre de 58 jours, limite de plage de blocs du nœud public). Pas bloquant pour le finding principal, qui est structurel et indépendant de la cadence historique.
-3. **Confirmer qu'aucune règle de "staleness" cachée côté infrafi-api** ne compense déjà ce défaut en stoppant la publication/alertant les partenaires en cas d'échec de `setExchangeRate` — on n'a pas le code infrafi-api pour vérifier ça. Si une telle compensation existe côté off-chain, ça nuance (sans l'annuler) la sévérité.
+1. **Sévérité réelle de Finding 1** — dépend d'identifier un consommateur downstream sur BNB Chain. Recherche GitHub/web négative à ce stade.
+2. **Historique des mises à jour** (Finding 1) — non récupéré (coût RPC élevé, limite de plage de blocs). Pas bloquant pour le finding, structurel et indépendant de la cadence historique.
+3. Confirmer qu'aucune règle de staleness cachée côté `infrafi-api` ne compense déjà ces défauts off-chain (code non accessible).
+4. Les deux PoC tournent contre un `anvil` local chargé avec le bytecode/storage réels (contournement d'une limitation anti-abus `eth_getProof`-en-batch commune à tous les RPC BSC publics testés) — voir `../poc/README.md` pour la justification complète et comment relancer avec un RPC premium si disponible.

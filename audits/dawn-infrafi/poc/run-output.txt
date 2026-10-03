@@ -1,0 +1,66 @@
+Compiling 1 files with Solc 0.8.33
+Solc 0.8.33 finished in 660.74ms
+Compiler run successful!
+
+Ran 3 tests for test/USDTelExchangeRate.PoC.t.sol:USDTelExchangeRatePoCTest
+[PASS] test_PoC_APYCeilingCompoundingBypass() (gas: 156620)
+Logs:
+  === FINDING 2: APY ceiling bounds simple interest, not compound growth ===
+  Starting rate   : 1009565510281362300
+  APY ceiling     : 200000000000000000 / scale 1000000000000000000
+  SECONDS_PER_YEAR: 31536000
+  
+  -- Baseline: one update after 365 days, at the maximum allowed growth --
+  Max rate a SINGLE yearly update may legally reach: 1211478612337634760
+  
+  -- Attack: same updater key, same one-year span, split into 12 monthly calls --
+    call 1 -> new rate: 1026391602119385005
+    call 2 -> new rate: 1043498128821374755
+    call 3 -> new rate: 1060889764301731000
+    call 4 -> new rate: 1078571260373426516
+    call 5 -> new rate: 1096547448046316957
+    call 6 -> new rate: 1114823238847088906
+    call 7 -> new rate: 1133403626161207054
+    call 8 -> new rate: 1152293686597227171
+    call 9 -> new rate: 1171498581373847623
+    call 10 -> new rate: 1191023557730078416
+    call 11 -> new rate: 1210873950358913056
+    call 12 -> new rate: 1231055182864894940
+  
+  Final rate after 12 individually-compliant monthly calls: 1231055182864894940
+  Max rate a single yearly update may legally reach       : 1211478612337634760
+  Excess over the documented annual ceiling (1e18 = 100%): 16159237421027008
+  
+  ==> 12 ordinary monthly calls by the REAL updater key, each one
+      individually passing the ApyCeilingExceeded check, compound the
+      rate PAST the single-update ceiling the contract's own comment
+      claims bounds the updater's damage -- with no compromise, no
+      privilege escalation, just routine operation.
+
+[PASS] test_PoC_APYCeilingCompoundingBypass_DailyCadence() (gas: 2899071)
+Logs:
+  === FINDING 2b: same bypass at daily cadence (365 calls/year) ===
+  Final rate after 365 daily calls over one year : 1233018558960841832
+  Max rate a single yearly update may legally reach: 1211478612337634760
+  Excess over the documented annual ceiling (1e18 = 100%): 17779881876448649
+  ==> At a realistic once-a-day feed cadence the excess over the
+      documented 20% annual ceiling is already visible without any
+      special attacker timing, and grows further at higher frequency.
+
+[PASS] test_PoC_ExchangeRateCanNeverBeCorrectedDownward() (gas: 32837)
+Logs:
+  === FINDING 1: exchange rate has no downward recovery path ===
+  Real contract         : 0x15A6F1f2705B3916b5B1D2b19b10F320778744C1
+  Real updater key       : 0x7aD7EEe24ACE80bb84D1bd8fe5798b852Eaa0718
+  Current published rate : 1009565510281362300
+  Current timestamp      : 1785974420
+  Honest corrected rate after a 1% real loss: 999469855178548677
+  setExchangeRate(correctedLowerRate) REVERTED: ExchangeRateDecreased()
+  ==> The real updater key, acting honestly after a real loss, CANNOT
+      correct the published rate downward. No other function in the
+      contract (setUpdater, transferOwnership, ownership handover) can
+      touch _exchangeRate either. The stale, too-high rate is permanent.
+
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 39.36ms (37.06ms CPU time)
+
+Ran 1 test suite in 39.89s (39.36ms CPU time): 3 tests passed, 0 failed, 0 skipped (3 total tests)
