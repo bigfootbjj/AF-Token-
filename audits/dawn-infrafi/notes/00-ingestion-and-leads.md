@@ -4,26 +4,30 @@ Statut : session 1, ingestion. Aucune attaque tentée (pas de source/réseau). T
 
 ## 0. Ce qui bloque une vraie attaque (à lever avant tout PoC)
 
-- Réseau sortant de cet environnement : seul `github.com` passe. `immunefi.com`, `bscscan.com`, `solscan.io`, les RPC Solana/BSC sont rejetés (`EGRESS_BLOCKED`/403). Impossible de lire le code vérifié du contrat BNB, l'état on-chain du vault Solana, ou la page scope Immunefi elle-même depuis ici.
+- Réseau sortant de cet environnement : **allowlist stricte, uniquement `github.com`**. Confirmé par test direct : `immunefi.com`, `bscscan.com`, `solscan.io`, les RPC Solana/BSC, et même **`api.infrastructure.finance` / `app.infrastructure.finance` / `docs.infrafi.io`** sont tous rejetés (`connect_rejected — organization policy`). Ce n'est pas un blocage ciblé sur 2-3 domaines, c'est un default-deny total sauf GitHub. Impossible de lire le code vérifié du contrat BNB, l'état on-chain du vault Solana, ou de sonder les routes publiques de l'API — même en lecture seule.
 - `LoopscaleLabs/loopscale-program-library` est **privé** (confirmé : `git clone` demande des identifiants). On n'a donc le code Loopscale qu'au travers des PDF d'audit (voir §2) — jamais le source complet, et de toute façon le programme Loopscale lui-même est hors-scope pour ce bounty.
-- Aucun repo public trouvé pour `infrafi-api`, `infrafi-web`, l'indexer ou le contrat BNB publisher (recherche web négative). Sans ces sources, aucune des lentilles PoC-tracé (L1,L2,L5,L6,L7,L10,L12,L13,L15,L16,L18...) n'est attaquable — seule une analyse de confiance/architecture est possible.
+- **Fausse piste écartée** : `infrafi/infrafi_frontend` et `infrafi/infrafi_documents` sur GitHub (trouvés par recherche de code) sont un **projet "InfraFi" totalement différent** — DePIN lending (nœuds OORT/Helium/Filecoin) sur EVM avec subgraph GraphQL, zéro mention de DAWN/Loopscale/USD.infra/Solana (vérifié par grep exhaustif, 0 match). Collision de nom uniquement. Ne pas réutiliser.
+- Aucun repo public réel trouvé pour `infrafi-api`, `infrafi-web` (le vrai, Next.js + wallet Solana), l'indexer ou le contrat BNB publisher. `githubUrl` est explicitement `null` dans les métadonnées officielles du programme (voir §1) — Immunefi lui-même ne référence aucun repo source. Sans ces sources, aucune des lentilles PoC-tracé (L1,L2,L5,L6,L7,L10,L12,L13,L15,L16,L18...) n'est attaquable — seule une analyse de confiance/architecture est possible.
 
 **Pour débloquer** (au choix, non exclusif) :
-1. Élargir l'accès réseau de l'environnement (bscscan.com, api.bscscan.com, solscan.io, api.mainnet-beta.solana.com, immunefi.com) via Settings → Network access.
-2. Si Mathieu a un accès (chercheur enregistré au programme) aux repos privés InfraFi (infrafi-api/infrafi-web/indexer/contrats), les attacher avec `add_repo` — c'est le déblocage le plus utile, bien plus que le simple accès explorer.
-3. À défaut, coller/uploader : code vérifié du contrat BNB (ou son implémentation si proxy), dump JSON du compte/IDL Solana du vault, liste exacte des 6 assets de la page scope Immunefi.
+1. Élargir l'accès réseau de l'environnement (au minimum : `api.infrastructure.finance`, `app.infrastructure.finance`, `bscscan.com`, `api.bscscan.com`, `solscan.io`, `api.mainnet-beta.solana.com`) via Settings → Network access. Même sans code source, ça débloquerait le test live des routes publiques de l'API (explicitement in-scope, cf. §1) et la lecture on-chain (IDL Anchor du vault, mint Token-2022).
+2. Si Mathieu a un accès (chercheur enregistré au programme) aux repos privés InfraFi (infrafi-api/infrafi-web/indexer/contrats), les attacher avec `add_repo` — déblocage le plus utile.
+3. À défaut, coller/uploader : code vérifié du contrat BNB (ou son implémentation si proxy), dump JSON du compte/IDL Solana du vault, réponses des routes publiques de l'API (cf. §1).
 
 ## 1. Cadrage (Étape 1-3, RÈGLE 3)
 
-**Assets confirmés (4/6)** — adresses on-chain extraites de tes fichiers :
-| # | Type | Identifiant |
-|---|---|---|
-| 1 | Solana account (Loopscale DAWN vault) | `4rXteUmbxiXvgLqP14eQwtqkLyVNXVCBHnXyLQ9vZkSh` |
-| 2 | Solana account (non identifié — probablement mint config / pause authority / strategy PDA) | `EZ8sq2FNnmqQo254irAMGNp7c6B7DPuKh22SyXAwuXSn` |
-| 3 | BNB Chain contract (exchange-rate publisher) | `0x15a6f1f2705b3916b5b1d2b19b10f320778744c1` |
-| 4 | SPL Token-2022 mint (USD.infra) | `dawn7ZUF7h7anFuEsDdAU1Y3HYwikwqNMAENZsQJdNL` |
+**Source : JSON officiel du programme**, miroité publiquement par `infosec-us-team/Immunefi-Bug-Bounty-Programs-Unofficial` (`project/dawn.json`, clone public GitHub — fiable, correspond mot pour mot à tes fichiers RTF). Ça nous donne les **6 assets confirmés**, avec leurs ID Immunefi et leur description officielle exacte :
 
-**2 assets manquants** (la page annonce 6 au total) — très probablement `infrafi-api` et `infrafi-web` comme assets "Websites and Applications". **Ne pas déclarer la cible "épuisée" sans ces 2 assets** (leçon Intuition, RÈGLE 9 dernier point).
+| # | ID | Type | Identifiant | Description officielle (extrait) |
+|---|---|---|---|---|
+| 1 | 100375 | smart_contract (BNB) | `0x15a6f1f2705b3916b5b1d2b19b10f320778744c1` | Reçoit/valide/stocke le taux publié par infrafi-api + sanity checks. **In scope : autorisation de publication du taux, staleness/validation, tout chemin vers un taux manipulé ou bloqué-ripcord.** |
+| 2 | 100376 | smart_contract (Solana) | mint `dawn7ZUF7h7anFuEsDdAU1Y3HYwikwqNMAENZsQJdNL` (USD.infra) | M0 wrapped-M, Token-2022 + Pausable. **In scope : config du mint + opération de l'autorité de pause.** |
+| 3 | 100745 | smart_contract (Solana) | `EZ8sq2FNnmqQo254irAMGNp7c6B7DPuKh22SyXAwuXSn` | "Loopscale credit vault holding InfraFi capital" — IDL Anchor on-chain disponible. **In scope : config/intégration du vault — deposit/withdraw, borrow/repay, intégration deal-valuation, autorisation emprunteur, sémantique exchange-rate/share-price.** |
+| 4 | 101012 | websites_and_applications | `api.infrastructure.finance` | Surface API publique d'infrafi-api consommée par le dashboard. **Routes listées explicitement : `GET /project`, `GET /project/metrics`, `GET /nav/*`, `GET /vault/solana/nav`, `GET /health`.** |
+| 5 | 101013 | websites_and_applications | `app.infrastructure.finance` | Dashboard public Next.js (wallet connect, deposit/redeem, affichage NAV/taux). |
+| 6 | 101014 | smart_contract (Solana) | `4rXteUmbxiXvgLqP14eQwtqkLyVNXVCBHnXyLQ9vZkSh` | **Même description officielle que l'asset #3** ("Loopscale credit vault..."). Immunefi a dupliqué le texte — probablement vault vs. strategy/market account du même vault, ou doublon d'ajout (asset #3 ajouté 11 août, #6 ajouté 21 sept). **À clarifier dès qu'on a l'IDL : ce sont-ils deux comptes distincts et liés, ou le même rôle déclaré deux fois ?** Ne pas fermer tant que ce n'est pas tranché (risque d'inventaire incomplet, leçon Intuition).
+
+Barème de récompense confirmé (identique smart_contract / websites_and_applications) : Critical $25k-$50k (range), High $3,500 fixe, Medium $2,000 fixe, Low $1,000 fixe. `githubUrl: null` côté Immunefi — aucun repo source officiellement fourni.
 
 **Primacy of Rules.** PoC obligatoire à toute sévérité. Repeatable Attack Limitation : seule l'attaque initiale compte si le contrat est pausable/upgradable (100% puis -50%/72h). Disclosure catégorie 2 (notice requise). Pas de KYC.
 
