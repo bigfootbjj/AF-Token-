@@ -65,6 +65,76 @@ function setExchangeRate(uint128 newUSDTelExchangeRate) public onlyUpdater {
 
 Aucune autre fonction du contrat (`setUpdater`, `transferOwnership`, ownership handover hérité de Solady `Ownable`) ne permet de modifier `_exchangeRate`. **Structurellement aucun chemin** pour corriger la valeur stockée vers le bas, quel que soit le rôle.
 
+## INVARIANT FANTÔME (méthode invariant-agent × first-principles-agent)
+
+Deuxième application de la méthode, cette fois sur Finding 1 — et la preuve textuelle est encore
+plus directe que pour Finding 2 : **l'auteur du contrat a lui-même désactivé une fonction
+précisément pour éviter le défaut que Finding 1 démontre, sans voir qu'il subsistait par un autre
+chemin.**
+
+**Étape 1 — Mapper l'invariant documenté (SHOULD-HOLD, preuve citée textuellement)**
+
+Preuve (`src/USDTelExchangeRate.sol`, lignes 120-125, commentaire de `renounceOwnership`) :
+
+```solidity
+/// @dev Disabled to prevent the feed from being permanently frozen, which
+///      would leave it unupdatable with no recovery path. Ownership can
+///      still be transferred via {transferOwnership}.
+function renounceOwnership() public payable override onlyOwner {
+    revert RenounceDisabled();
+}
+```
+
+L'auteur énonce explicitement l'invariant qu'il veut garantir pour **"the feed"** (le flux de
+taux publié, pas seulement la gouvernance du contrat) :
+
+```
+INVARIANT (SHOULD-HOLD, cité textuellement) :
+  "the feed" ne doit JAMAIS devenir "permanently frozen... unupdatable with no recovery path"
+```
+
+C'est la raison explicite pour laquelle `renounceOwnership` est désactivé : l'auteur a identifié
+*un* chemin vers ce mauvais état (renoncer à l'ownership → plus personne pour faire tourner
+`setUpdater` → le feed devient définitivement figé) et l'a bloqué.
+
+**Étape 2 — Montrer que l'invariant reste violé par un AUTRE chemin, que l'auteur n'a pas vu**
+
+`setExchangeRate` (ligne 55-63 ci-dessus) crée exactement l'état que l'auteur dit vouloir empêcher
+— **"permanently frozen... unupdatable with no recovery path"** — mais sur la VALEUR du feed
+(`_exchangeRate`) plutôt que sur son autorité de contrôle (`_updater`/`owner`). L'auteur a bien
+pensé à protéger "qui peut mettre à jour le feed" (en interdisant de perdre le owner), mais n'a pas
+appliqué le même raisonnement à "ce que le feed peut effectivement publier" — le check monotone
+crée un second chemin, totalement indépendant de la gouvernance, vers le même état interdit :
+
+```
+invariant       : "the feed" ne doit jamais devenir permanently frozen / unupdatable with no
+                  recovery path — invariant que L'AUTEUR LUI-MÊME énonce et tente de garantir
+                  en désactivant renounceOwnership
+violation_path  : (1) owner et updater restent tous deux parfaitement fonctionnels, fidèles,
+                  non compromis, exactement comme l'auteur l'a prévu ;
+                  (2) le vault Loopscale subit une perte réelle (risque de crédit ordinaire) ;
+                  (3) l'updater légitime appelle setExchangeRate() avec la valeur honnête, plus
+                  basse → revert ExchangeRateDecreased() ;
+                  (4) AUCUNE fonction de gouvernance (celles que renounceOwnership était censé
+                  protéger) ne peut aider : setUpdater change qui est autorisé, pas la valeur
+                  stockée. Le feed est maintenant figé, exactement comme redouté — mais la
+                  gouvernance fonctionne parfaitement, ce n'est pas elle qui a été compromise.
+proof           : confirmé par PoC Foundry (`test_PoC_ExchangeRateCanNeverBeCorrectedDownward`)
+                  ET par simulation `eth_call` live contre le vrai state mainnet (notes/06) —
+                  le même revert `ExchangeRateDecreased()` dans les deux cas, avec les vrais
+                  acteurs (vrai updater, vrai owner Gnosis Safe) totalement non compromis.
+```
+
+**Conclusion de la méthode :** ce n'est pas un bug "qu'on aurait pu prévoir en lisant le code
+attentivement" — c'est un bug que **l'auteur a explicitement essayé d'empêcher**, dont il a
+correctement identifié la forme ("permanently frozen, unupdatable, no recovery path") et la
+gravité (suffisamment grave pour désactiver une fonction standard d'OpenZeppelin/Solady), mais
+pour lequel il n'a protégé qu'un seul des deux chemins qui y mènent. Ça renforce directement
+l'argument "Pourquoi pas exclu" : ce n'est ni un risque de centralisation (la gouvernance n'a
+jamais besoin d'être compromise), ni une conséquence acceptée du design (l'auteur dit explicitement
+vouloir éviter CET état précis) — c'est l'objectif de sécurité déclaré du contrat qui échoue à se
+réaliser, par un chemin que l'auteur n'a simplement pas couvert.
+
 ## SCÉNARIO
 
 1. Le vault Loopscale DAWN subit une perte réelle (défaut, markdown, insolvabilité partielle) → le NAV réel baisse.
