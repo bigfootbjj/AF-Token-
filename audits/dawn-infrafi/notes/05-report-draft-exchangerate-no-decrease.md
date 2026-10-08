@@ -346,6 +346,60 @@ Comparer la croissance contre une référence fixe (ex. taux et timestamp d'il y
 
 ---
 
+## COMBINAISON F1 × F2 — pourquoi la dérive est permanente et non bornée dans le temps
+
+Application de la lentille "flow-gap" (seam entre deux agents/findings — *"bugs that REQUIRE the
+combination"*) : Finding 2 pris isolément ne dit que "+1.78% d'excès sur un an au pire cas de
+fréquence". Combiné avec Finding 1, l'image change complètement.
+
+```
+seam  : invariant-agent (F2 — invariant global phantom) × Finding 1 (aucun chemin de correction
+        à la baisse)
+trace : (1) cadence de publication normale à haute fréquence pendant l'année 1 → le taux termine
+        l'année ~1.78% au-dessus du maximum que l'invariant documenté autorise ;
+        (2) Finding 1 : AUCUNE fonction du contrat ne peut jamais corriger `_exchangeRate` à la
+        baisse, quel que soit l'acteur (updater honnête, owner, Gnosis Safe) ;
+        (3) donc le point de départ de l'année 2 est déjà l'excès de l'année 1 — le check local de
+        F2 recommence à saturer par rapport à CETTE base déjà trop haute, sans jamais être rattrapé ;
+        (4) répéter (1)-(3) chaque année → l'excès COMPOSE indéfiniment, sans aucune borne
+        supérieure dans le temps.
+garantie violée : l'invariant documenté ("bounded by the APY ceiling") est censé être une borne
+        FIXE et PERMANENTE sur la croissance annualisée — pas une borne qui elle-même se déplace
+        et compose chaque année à cause d'un autre bug du même contrat.
+```
+
+**Preuve chiffrée** (cadence quotidienne soutenue, 365 appels/an, chaque appel saturant exactement
+le check local — aucune malveillance, juste un flux automatisé normal) :
+
+| Durée | Taux réel / taux initial | Maximum documenté / taux initial | Excès cumulé |
+|---|---|---|---|
+| 1 an | ×1.2213 | ×1.2000 | **+1.78%** |
+| 2 ans | ×1.4917 | ×1.4400 | +3.59% |
+| 5 ans | ×2.7175 | ×2.4883 | +9.21% |
+| 10 ans | ×7.3850 | ×6.1917 | **+19.27%** |
+| 20 ans | ×54.54 | ×38.34 | +42.26% |
+
+Le ratio composé par an entre le réel et le documenté est constant : `e^0.2 / 1.2 ≈ 1.01778`, donc
+l'excès cumulé après T années est `(1.01778)^T − 1` — **une croissance exponentielle de l'écart
+lui-même**, sans amortissement possible puisque Finding 1 bloque structurellement tout retour à la
+ligne documentée.
+
+**Ce que ça change pour la sévérité :** Finding 2 seul pourrait être lu comme un dépassement ponctuel
+et borné (+1.78% une fois, puis stable). La combinaison avec Finding 1 montre que ce n'est PAS le
+cas : tant que le service de publication opère à une cadence normale (quotidienne ou plus fréquente)
+pendant plusieurs années, l'écart entre le taux publié et la garantie documentée croît sans limite
+mathématique dans le temps — ce n'est plus "le contrat dépasse un peu son plafond", c'est "le
+contrat n'a, dans les faits, aucun plafond de croissance à long terme, et aucun moyen de corriger
+cette dérive". Reste néanmoins : pas de perte de fonds démontrée (le contrat n'en détient aucun), et
+toujours aucun consommateur downstream identifié — donc la catégorie d'impact officielle applicable
+reste *"Contract fails to deliver promised returns, but doesn't lose value"* (LOW). Mais l'argument
+de matérialité dans le rapport est maintenant **beaucoup plus fort** : ce n'est pas un excès cosmétique,
+c'est une dérive structurellement permanente et composée, démontrée avec des chiffres concrets sur
+plusieurs horizons temporels — à faire valoir explicitement dans la section Impact Details si un
+juge discute la sévérité.
+
+---
+
 ## Points ouverts avant soumission (les deux findings)
 
 1. **Sévérité réelle de Finding 1 et 2** — recherche du consommateur downstream exhaustive (GitHub,
