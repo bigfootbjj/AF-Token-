@@ -205,4 +205,85 @@ contract USDTelExchangeRatePoCTest is Test {
 
         assertGt(rate, maxSingleUpdateRate, "daily-cadence rate must exceed the single-update ceiling");
     }
+
+    /// @notice COMBINED FINDING — Finding 2 (per-call ceiling compounds instead of
+    ///         bounding annual growth) composed with Finding 1 (no function can ever
+    ///         lower _exchangeRate) across multiple years. Each year's compounding
+    ///         excess becomes the PERMANENT starting point for the next year, so the
+    ///         gap between the real published rate and the documented ceiling grows
+    ///         WITHOUT BOUND over time -- not a one-time, self-correcting overshoot.
+    ///         This test runs 10 years of ordinary daily updates (3650 calls, no
+    ///         malicious timing, every single call individually passing
+    ///         ApyCeilingExceeded), shows the realized multiplier is already ~19%
+    ///         beyond the documented 10-year maximum, and then proves that maximum
+    ///         can never be corrected back to -- the real updater, trying to fix the
+    ///         rate down to the documented-compliant value, is blocked by the exact
+    ///         same ExchangeRateDecreased() revert demonstrated in Finding 1.
+    function test_PoC_PermanentCompoundingDriftAcrossYears() public {
+        (uint128 r0,) = target.getExchangeRate();
+        address updater = target._updater();
+        uint256 ceiling = target._apyCeiling();
+        uint256 year = target.SECONDS_PER_YEAR();
+        uint256 scale = target.APY_SCALE();
+
+        console2.log("=== COMBINED FINDING: F2 compounding x F1 no-downward-correction ===");
+        console2.log("Starting rate r0                         :", r0);
+        console2.log("Documented APY ceiling (1e18 = 100%)      :", ceiling);
+
+        uint256 yearsToSimulate = 10;
+        uint256 callsPerYear = 365; // ordinary daily automated-feed cadence, no special timing
+        uint256 step = year / callsPerYear;
+        uint256 rate = r0;
+
+        console2.log("");
+        console2.log("-- Simulating", yearsToSimulate, "years of ordinary daily updates --");
+        for (uint256 y = 0; y < yearsToSimulate; y++) {
+            for (uint256 i = 0; i < callsPerYear; i++) {
+                vm.warp(block.timestamp + step);
+                uint256 growth = (rate * ceiling * step) / (year * scale);
+                uint128 newRate = uint128(rate + growth);
+                vm.prank(updater);
+                target.setExchangeRate(newRate); // succeeds -- passes the per-call check every time
+                rate = newRate;
+            }
+            console2.log("  end of year", y + 1, "-> rate:", rate);
+        }
+
+        // Documented maximum after `yearsToSimulate` years if the ceiling genuinely
+        // bounded annual growth, compounded year over year: r0 * (1+ceiling)^years.
+        uint256 documentedMax = uint256(r0);
+        for (uint256 y = 0; y < yearsToSimulate; y++) {
+            documentedMax = documentedMax + (documentedMax * ceiling) / scale;
+        }
+
+        console2.log("");
+        console2.log("Real rate after", yearsToSimulate, "years of ordinary operation:", rate);
+        console2.log("Documented maximum after the same period :", documentedMax);
+        uint256 excessWad = ((rate - documentedMax) * 1e18) / documentedMax;
+        console2.log("Cumulative excess over the documented 10-year ceiling (1e18=100%):", excessWad);
+        console2.log("==> ~19%% excess after 10 years of ENTIRELY ORDINARY operation --");
+        console2.log("    no compromise, no attacker timing, just a normal daily feed.");
+
+        assertGt(rate, documentedMax, "10-year compounded rate must exceed the 10-year documented ceiling");
+
+        // Now prove the excess can NEVER be corrected back down: the real updater,
+        // acting honestly, tries to fix the rate back to the documented-compliant
+        // maximum (still a real reduction relative to where it actually sits).
+        console2.log("");
+        console2.log("-- Attempting an honest correction back to the documented ceiling --");
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(updater);
+        vm.expectRevert(IUSDTelExchangeRate.ExchangeRateDecreased.selector);
+        target.setExchangeRate(uint128(documentedMax));
+
+        console2.log("setExchangeRate(documentedMax) REVERTED: ExchangeRateDecreased()");
+        console2.log("==> The permanent ~19%% drift accumulated over 10 years of ordinary");
+        console2.log("    operation CANNOT be corrected by anyone, ever. The two findings");
+        console2.log("    combine into a structurally unbounded, irreversible divergence");
+        console2.log("    between the published rate and the contract's own documented");
+        console2.log("    security guarantee.");
+
+        (uint128 rateAfter,) = target.getExchangeRate();
+        assertEq(rateAfter, rate, "rate must remain unchanged after the reverted correction attempt");
+    }
 }

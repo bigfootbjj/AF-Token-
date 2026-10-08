@@ -1,18 +1,18 @@
 Compiling 1 files with Solc 0.8.33
-Solc 0.8.33 finished in 660.74ms
+Solc 0.8.33 finished in 1.02s
 Compiler run successful!
 
-Ran 3 tests for test/USDTelExchangeRate.PoC.t.sol:USDTelExchangeRatePoCTest
-[PASS] test_PoC_APYCeilingCompoundingBypass() (gas: 156620)
+Ran 4 tests for test/USDTelExchangeRate.PoC.t.sol:USDTelExchangeRatePoCTest
+[PASS] test_PoC_APYCeilingCompoundingBypass() (gas: 156554)
 Logs:
   === FINDING 2: APY ceiling bounds simple interest, not compound growth ===
   Starting rate   : 1009565510281362300
   APY ceiling     : 200000000000000000 / scale 1000000000000000000
   SECONDS_PER_YEAR: 31536000
-  
+
   -- Baseline: one update after 365 days, at the maximum allowed growth --
   Max rate a SINGLE yearly update may legally reach: 1211478612337634760
-  
+
   -- Attack: same updater key, same one-year span, split into 12 monthly calls --
     call 1 -> new rate: 1026391602119385005
     call 2 -> new rate: 1043498128821374755
@@ -26,18 +26,18 @@ Logs:
     call 10 -> new rate: 1191023557730078416
     call 11 -> new rate: 1210873950358913056
     call 12 -> new rate: 1231055182864894940
-  
+
   Final rate after 12 individually-compliant monthly calls: 1231055182864894940
   Max rate a single yearly update may legally reach       : 1211478612337634760
   Excess over the documented annual ceiling (1e18 = 100%): 16159237421027008
-  
+
   ==> 12 ordinary monthly calls by the REAL updater key, each one
       individually passing the ApyCeilingExceeded check, compound the
       rate PAST the single-update ceiling the contract's own comment
       claims bounds the updater's damage -- with no compromise, no
       privilege escalation, just routine operation.
 
-[PASS] test_PoC_APYCeilingCompoundingBypass_DailyCadence() (gas: 2899071)
+[PASS] test_PoC_APYCeilingCompoundingBypass_DailyCadence() (gas: 2899093)
 Logs:
   === FINDING 2b: same bypass at daily cadence (365 calls/year) ===
   Final rate after 365 daily calls over one year : 1233018558960841832
@@ -61,6 +61,36 @@ Logs:
       contract (setUpdater, transferOwnership, ownership handover) can
       touch _exchangeRate either. The stale, too-high rate is permanent.
 
-Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 39.36ms (37.06ms CPU time)
+[PASS] test_PoC_PermanentCompoundingDriftAcrossYears() (gas: 28753188)
+Logs:
+  === COMBINED FINDING: F2 compounding x F1 no-downward-correction ===
+  Starting rate r0                         : 1009565510281362300
+  Documented APY ceiling (1e18 = 100%)      : 200000000000000000
 
-Ran 1 test suite in 39.89s (39.36ms CPU time): 3 tests passed, 0 failed, 0 skipped (3 total tests)
+  -- Simulating 10 years of ordinary daily updates --
+    end of year 1 -> rate: 1233018558960841832
+    end of year 2 -> rate: 1505929779948761494
+    end of year 3 -> rate: 1839246040260572244
+    end of year 4 -> rate: 2246337141117757526
+    end of year 5 -> rate: 2743532100169812986
+    end of year 6 -> rate: 3350774132202093165
+    end of year 7 -> rate: 4092420600560767810
+    end of year 8 -> rate: 4998220026512980581
+    end of year 9 -> rate: 6104505345812258510
+    end of year 10 -> rate: 7455651275729940762
+
+  Real rate after 10 years of ordinary operation: 7455651275729940762
+  Documented maximum after the same period : 6250963540807952616
+  Cumulative excess over the documented 10-year ceiling (1e18=100%): 192720326563651538
+  ==> ~19% excess after 10 years of ENTIRELY ORDINARY operation --
+      no compromise, no attacker timing, just a normal daily feed.
+
+  -- Attempting an honest correction back to the documented ceiling --
+  setExchangeRate(documentedMax) REVERTED: ExchangeRateDecreased()
+  ==> The permanent ~19% drift accumulated over 10 years of ordinary
+      operation CANNOT be corrected by anyone, ever. The two findings
+      combine into a structurally unbounded, irreversible divergence
+      between the published rate and the contract's own documented
+      security guarantee.
+
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in ~41s

@@ -14,6 +14,13 @@ the test interacts with the actual verified bytecode (fetched from
    ceiling check bounds simple interest, not compounded growth, so routine, non-malicious
    update cadences (monthly or daily) push the realized annual growth past the documented
    `_apyCeiling` (currently 20%).
+3. **`test_PoC_PermanentCompoundingDriftAcrossYears`** — combines findings 1 and 2: since the
+   per-call compounding excess from finding 2 can never be corrected back down (finding 1),
+   the gap between the real published rate and the documented ceiling compounds **without
+   bound across years**, not just within one year. Simulates 10 years of ordinary daily
+   updates (3650 calls, no malicious timing) and shows ~19% cumulative excess over the
+   documented 10-year maximum, then proves that excess can never be corrected back to the
+   documented-compliant value.
 
 ## Dependencies
 
