@@ -229,6 +229,85 @@ if (apy > _apyCeiling) {
 
 Le contrôle compare la croissance de CET appel contre le taux immédiatement précédent — jamais contre une référence fixe (ex. le taux il y a un an). Enchaîner N appels, chacun saturant son propre contrôle, compose multiplicativement : `rate_N = rate_0 * (1 + ceiling/N)^N`, qui tend vers `rate_0 * e^ceiling` au lieu du `rate_0 * (1 + ceiling)` qu'un seul appel annuel autoriserait.
 
+## INVARIANT FANTÔME (méthode invariant-agent)
+
+Application formelle de la méthodologie "invariant-agent" (mapper l'invariant → le casser → preuve
+chiffrée) : l'invariant que le contrat *affirme* tenir dans son propre commentaire de sécurité
+n'est **jamais réellement encodé** dans le check — c'est un invariant fantôme.
+
+**Étape 1 — Mapper l'invariant documenté (SHOULD-HOLD, preuve citée textuellement)**
+
+Preuve (`src/USDTelExchangeRate.sol`, docstring du champ `_updater`) :
+> *"A compromised updater can only push rates (bounded by the APY ceiling); it cannot manage
+> ownership or the updater itself."*
+
+Lecture naturelle de cette garantie : le plafond `_apyCeiling` borne la croissance **annualisée
+réelle, sur n'importe quelle fenêtre de temps** — pas seulement un seul appel isolé. Formellement,
+l'invariant GLOBAL que le contrat prétend garantir est :
+
+```
+∀ t1 < t2 :  rate(t2) ≤ rate(t1) · (1 + ceiling · (t2 − t1) / YEAR)
+```
+
+C'est la seule lecture qui rend la phrase "bounded by the APY ceiling" vraie au sens où l'entend
+tout lecteur (développeur, auditeur, ou un juge Immunefi) : une borne sur ce que *n'importe quelle*
+séquence d'appels — honnête ou malveillante — peut faire subir au taux sur un an.
+
+**Étape 2 — L'invariant réellement encodé est strictement plus faible**
+
+Le code n'enforce que la version LOCALE, par appel :
+
+```
+∀ appels consécutifs t_{i-1} → t_i :  rate(t_i) ≤ rate(t_{i-1}) · (1 + ceiling · (t_i − t_{i-1}) / YEAR)
+```
+
+Composer N contraintes locales saturées sur une durée totale fixe (N pas égaux) donne, par
+récurrence multiplicative :
+
+```
+rate(T) ≤ rate(0) · (1 + ceiling/N)^N
+```
+
+Or `(1 + ceiling/N)^N` est **strictement croissant en N** et converge vers `e^ceiling` quand
+N → ∞ — qui est **strictement supérieur** à `(1 + ceiling)` pour tout `ceiling > 0` (inégalité
+standard `e^x > 1 + x` pour x > 0). L'invariant local n'implique PAS l'invariant global : c'est
+exactement le patron "bypass cap enforcement via un chemin secondaire" — ici, le "chemin
+secondaire" n'est pas une autre fonction, c'est simplement **une cadence d'appel plus fréquente**
+de la même fonction.
+
+**Preuve chiffrée de la convergence** (ceiling = 20%, cas réel du contrat) :
+
+| N (appels/an) | `(1+c/N)^N` | Excès vs. `(1+c)` |
+|---|---|---|
+| 1 (annuel, conforme à l'invariant local ET global) | 1.200000 | 0.0000% |
+| 12 (mensuel) | 1.219391 | **+1.6159%** (= valeur PoC exacte) |
+| 52 (hebdo) | 1.220934 | +1.7445% |
+| 365 (quotidien) | 1.221336 | **+1.7780%** (= valeur PoC exacte) |
+| 8760 (horaire) | 1.221400 | +1.7833% |
+| N → ∞ (limite théorique, `e^0.2`) | **1.221403** | **+1.7836%** |
+
+```
+invariant       : rate(t2) ≤ rate(t1) · (1 + ceiling · (t2−t1)/YEAR) pour toute paire (t1,t2) —
+                  documenté textuellement par le contrat lui-même ("bounded by the APY ceiling")
+violation_path  : setExchangeRate() appelé N fois en un an, chaque appel saturant exactement le
+                  check per-call (cadence mensuelle ou quotidienne — aucune action malveillante,
+                  juste une fréquence de publication normale pour un flux automatisé)
+proof           : rate_0 = 1009565510281362300 (taux réel mainnet) ; après 12 appels mensuels
+                  saturés → rate = 1231055182864894940, soit +1.62% au-dessus du plafond
+                  qu'un unique appel annuel aurait permis (1211478612337634760) ; après 365
+                  appels quotidiens → +1.78% ; la limite mathématique à fréquence infinie est
+                  e^0.2 − 1 ≈ +1.78% de croissance RÉELLE jamais autorisée par l'invariant
+                  documenté, atteignable sans aucune compromission
+```
+
+**Conclusion de la méthode :** l'invariant global que le contrat promet dans son propre commentaire
+n'existe nulle part dans le bytecode — ni comme check explicite, ni comme conséquence logique du
+check local qui, lui, existe bien. C'est un invariant fantôme : vrai en apparence (chaque transition
+individuelle le respecte), faux en composition (la séquence complète le viole). La correction
+proposée plus bas (comparer contre une référence fixe, ou utiliser une vraie formule d'intérêts
+composés) est précisément ce qui transformerait l'invariant local en l'invariant global réellement
+documenté.
+
 ## PREUVE DE CONCEPT
 
 PoC Foundry exécutable (`test_PoC_APYCeilingCompoundingBypass` et sa variante `_DailyCadence`), même fork que Finding 1. Sortie réelle :
